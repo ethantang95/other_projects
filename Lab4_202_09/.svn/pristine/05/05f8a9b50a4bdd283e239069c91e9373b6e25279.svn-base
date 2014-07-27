@@ -1,0 +1,836 @@
+package ca.uwaterloo.lab4_202_09;
+
+/*TODO
+ * rewrite the TODO list
+ * 
+ * 
+ * 
+ */
+
+import java.util.ArrayList;
+import java.util.List;
+
+import android.app.Activity;
+import android.graphics.PointF;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.view.ContextMenu;
+import android.view.ContextMenu.ContextMenuInfo;
+import android.view.Menu;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+//import android.hardware.SensorListener;
+
+//-------------------------------------------------------ALL SENSORS-------------------------------------------------------
+//assuming that this class actually works
+class magEventListener implements SensorEventListener {
+
+	public magEventListener() {
+	}
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+		// TODO Auto-generated method stub
+
+	}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) { // a bunch of variables
+														// were made for
+														// debugging purposes
+		float[] orientMatrix = new float[9];
+		float[] orient = new float[3];
+		float[] orientGrav = MainActivity.getGrav();
+		SensorManager.getRotationMatrix(orientMatrix, null, orientGrav,
+				event.values);
+		SensorManager.getOrientation(orientMatrix, orient);
+		MainActivity.setOrientation(orient[0]);
+	}
+}
+
+class gravEventListener implements SensorEventListener {
+
+	public gravEventListener() {
+	}
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+		// TODO Auto-generated method stub
+
+	}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		MainActivity.updateGrav(event.values);
+	}
+}
+
+class AccelerationEventListener implements SensorEventListener {
+
+	public AccelerationEventListener() {
+	}
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+
+	}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		double z;
+		z = Math.sqrt(Math.pow(event.values[0], 2)
+				+ Math.pow(event.values[1], 2) + Math.pow(event.values[2], 2));
+		z = (Math.round(((double) 10 * z))) / 10d;
+		float[] zz = new float[1];
+		zz[0] = (float) z;
+
+		// MainActivity.graphChange(zz);
+		MainActivity.valueAnalysis(zz[0]);
+	}
+}
+
+// ---------------------------------------------------------------END
+// SENSORS------------------------------------------------------------
+
+// -------------------------------------------------------------------MAIN---------------------------------------------------------------
+public class MainActivity extends Activity {
+
+	// ------------------------------SENSOR DECLARATION
+	// declaring lin acc sensors
+	SensorManager accSensorManager;
+	SensorEventListener accelerationListener;
+	Sensor accelerationSensor;
+	// declaring magnetic sensors
+	SensorManager magSensorManager;
+	SensorEventListener magListener;
+	Sensor magSensor;
+	// declaring accelerometer (gravity) sensor
+	SensorManager gravSensorManager;
+	SensorEventListener gravListener;
+	Sensor gravSensor;
+	// --------------------------------------------------
+
+	// ---------------------------------LAB 2 STATIC VARS
+	// declaring distance related variables
+	public static float distance;
+	// temp max/min are for storing the min or max values of each step
+	public static float value, currMin = 0, currMax = 0, secant = 0,
+			noiseMin = 0, noiseMax = 0, restPoint = 0;
+	public static float[] s = { 0, 0, 0, 0, 0 };
+	public static Steps steps;
+	// toMax variable means that the current secant is trying to reach the max
+	public static boolean initialTaken = false, toMax = false;
+	// state represents which segment of the state machine has been reached
+	public static int state = 1, shift = 0;
+	// --------------------------------------------------
+
+	// ---------------------------------LAB 3 STATIC VARS
+	// for storing steps in all directions
+	static int stepN = 0, stepNE = 0, stepE = 0, stepSE = 0, stepS = 0,
+			stepSW = 0, stepW = 0, stepNW = 0, displacement = 0;
+	static float xCoor = (float) 3.7, yCoor = (float) 8.9, filteredAzi,
+			stepLength = (float) 0.65, displacementFloat = 0, azi = 0;
+	public static float[] grav = { 0, 0, 0 };
+	// declaring rotation related variables
+	public static String[] direction = new String[20];
+	public static String filteredDir, totalDirection;
+	// --------------------------------------------------
+
+	// --------------------------------TV AND UI OBJECTS
+	public static TextView stateTxt, toMAX, noiseMIN, MIN, MAX, sec, dir,
+			azitxt, steptxt1, steptxt2, steptxt3, totalDisplacement, axisDisp;
+	public static MapView mv;
+	public static NavigationalMap map;
+	public static PointF start = new PointF((float) 3.7, (float) 8.9);
+	public static PointF destination = new PointF((float) 15, (float) 5.2);
+
+	// -------------------------------------------------
+
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_main);
+
+		// setup map
+		// ###########################################################################
+		mv = new MapView(getApplicationContext(), 1000, 800, 50, 50);
+		registerForContextMenu(mv);
+
+		map = MapLoader.loadMap(getExternalFilesDir(null),
+				"Lab-room-inclined-16deg.svg");
+		mv.setMap(map);
+		mv.setVisibility(View.VISIBLE);
+		registerForContextMenu(mv);
+
+		PositionListen poslist = new PositionListen();
+		mv.addListener(poslist);
+		mv.setOriginPoint(start);
+		mv.setUserPoint(start);
+		mv.setDestinationPoint(destination);
+		updatePath();
+
+		// ---------------------------------------------SET UP ALL SENSORS
+		// set up objects for sensor
+		// ###########################################################
+		accSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+		accelerationSensor = accSensorManager
+				.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+		accelerationListener = new AccelerationEventListener();
+		accSensorManager.registerListener(accelerationListener,
+				accelerationSensor, 1000000);
+
+		// setting up the magnet sensor
+		magSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+		magSensor = magSensorManager
+				.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+		magListener = new magEventListener();
+		magSensorManager.registerListener(magListener, magSensor, 100);
+
+		// setting up the accel (grav) sensor
+		gravSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+		gravSensor = gravSensorManager
+				.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+		gravListener = new gravEventListener();
+		gravSensorManager.registerListener(gravListener, gravSensor, 100);
+		// -----------------------------------------------------------------
+
+		// set up graph
+		TextView gTitle = new TextView(getApplicationContext());
+		gTitle.setText("Linear acceleration graph");
+
+		// this textview object will be exclusively be used the steps object
+		TextView stepTxt = new TextView(getApplicationContext());
+		steps = new Steps(stepTxt);
+
+		stateTxt = new TextView(getApplicationContext());
+		stateTxt.setText("State is currently: " + state);
+
+		// ----------------------------------------------DEBUG TEXTVIEWS
+		// all of these were used for bug testing and data analysis
+		toMAX = new TextView(getApplicationContext());
+		toMAX.setText("Going to max: " + toMax);
+
+		noiseMIN = new TextView(getApplicationContext());
+		noiseMIN.setText("noiseMIN: " + noiseMIN);
+
+		MAX = new TextView(getApplicationContext());
+		MAX.setText("MAX: " + currMax);
+
+		MIN = new TextView(getApplicationContext());
+		MIN.setText("MIN: " + currMin);
+
+		sec = new TextView(getApplicationContext());
+		sec.setText("Secant: " + secant);
+		// ----------------------------------------------------------------
+
+		// ---------------------------------------------LAB 3 TEXTVIEWS
+		dir = new TextView(getApplicationContext());
+		dir.setText("Direction: " + direction);
+
+		azitxt = new TextView(getApplicationContext());
+		azitxt.setText("Azimuth: " + azi);
+
+		steptxt1 = new TextView(getApplicationContext());
+		steptxt1.setText("   NW: " + stepNW + "  N: " + stepN + "  NE: "
+				+ stepNE);
+
+		steptxt2 = new TextView(getApplicationContext());
+		steptxt2.setText(" W: " + stepW + "                      E: " + stepE);
+
+		steptxt3 = new TextView(getApplicationContext());
+		steptxt3.setText("   SW: " + stepSW + "  S: " + stepS + "  SE: "
+				+ stepSE);
+
+		totalDisplacement = new TextView(getApplicationContext());
+		totalDisplacement.setText("Total displacement: " + displacement
+				+ " steps " + totalDirection);
+
+		LinearLayout layout = ((LinearLayout) findViewById(R.id.labelRel));
+		layout.setOrientation(LinearLayout.VERTICAL);
+
+		axisDisp = new TextView(getApplicationContext());
+		axisDisp.setText("Displacement=> x: " + xCoor + "  y: " + yCoor);
+		// ------------------------------------------------------------
+
+		// produce user interface
+		layout.addView(mv);
+		layout.addView(gTitle);
+		layout.addView(steps.stepTxt);
+		layout.addView(stateTxt);
+		layout.addView(toMAX);
+		layout.addView(noiseMIN);
+		layout.addView(MAX);
+		layout.addView(MIN);
+		layout.addView(sec);
+		layout.addView(dir);
+		layout.addView(azitxt);
+		layout.addView(steptxt1);
+		layout.addView(steptxt2);
+		layout.addView(steptxt3);
+		layout.addView(totalDisplacement);
+		layout.addView(axisDisp);
+
+	}
+
+	// ----------------------------------------------CLASSES MADE FOR LABS
+	// for keeping track of the steps and managing the display of steps taken
+	class Steps {
+		int steps = 0;
+		TextView stepTxt;
+
+		Steps(TextView text) {
+			stepTxt = text;
+			stepTxt.setText("Steps taken: " + steps);
+		}
+
+		public void resetSteps() {
+			steps = 0;
+			MainActivity.TVSetTxt(stepTxt, ("Steps taken: " + steps));
+		}
+
+		public void addSteps() {
+			steps++;
+			MainActivity.directionInc();
+			MainActivity.TVSetTxt(stepTxt, ("Steps taken: " + steps));
+			MainActivity.updateCoor();
+		}
+
+	}
+
+	// for obtaining the position then displaying it
+	class PositionListen implements PositionListener {
+
+		@Override
+		public void originChanged(MapView source, PointF loc) {
+
+		}
+
+		@Override
+		public void destinationChanged(MapView source, PointF dest) {
+			// TODO Auto-generated method stub
+
+		}
+
+	}
+
+	// -------------------------------------------------------------------
+
+	// ---------------------------------------GENERAL METHOD FOR BOTH LABS
+	// sets string to specified text
+	public static void TVSetTxt(TextView view, String toSet) {
+		view.setText(toSet);
+	}
+
+	public void clearSteps(View view) {
+		steps.resetSteps();
+		stepsReset();
+		stepN = stepNE = stepE = stepSE = stepS = stepSW = stepW = stepNW = displacement = 0;
+		totalDirection = null;
+		xCoor = start.x;
+		yCoor = start.y;
+
+		// replaces every textview object that stores data
+		steptxt1.setText("   NW: " + stepNW + "  N: " + stepN + "  NE: "
+				+ stepNE);
+		steptxt2.setText(" W: " + stepW + "                      E: " + stepE);
+		steptxt3.setText("   SW: " + stepSW + "  S: " + stepS + "  SE: "
+				+ stepSE);
+		totalDisplacement.setText("Total displacement: " + displacement
+				+ " steps " + totalDirection);
+		axisDisp.setText("Displacement=> x: " + xCoor + "  y: " + yCoor);
+		mv.setUserPoint(start);
+		updatePath();
+	}
+
+	// -------------------------------------------------------------------
+
+	// ------------------------------------------LAB 3 METHODS FOR DIRECTION
+	public static void updateGrav(float[] curGrav) {
+		grav = curGrav;
+	}
+
+	public static float[] getGrav() {
+		return grav;
+	}
+
+	public static void setOrientation(float value) {
+		// move records of direction up by 1
+		boolean stable = true;
+		for (int i = direction.length - 1; i > 0; i--) {
+			direction[i] = direction[i - 1];
+		}
+		int directionNum = getDirection(value);
+		direction[0] = getDirectionText(directionNum);
+		azi = value;
+
+		// check if last 5 directions are same. If not, set as unstable
+		for (int i = direction.length - 1; i > 0; i--) {
+			if (direction[i] != direction[i - 1])
+				stable = false;
+		}
+
+		// if it's stable, set the filtered direction
+		if (stable == true) {
+			filteredDir = direction[0];
+			filteredAzi = azi;
+		}
+		dir.setText("Direction: " + filteredDir);
+		azitxt.setText("Azimuth: " + filteredAzi);
+	}
+
+	public static int getDirection(float value) {
+
+		// value must be in a range of 0 to 2pi
+		// gets the direction based on the compass
+		if (value > (-Math.PI / 8) && value <= (Math.PI / 8))
+			return 0;
+		if (value > (Math.PI / 8) && value <= (3 * Math.PI / 8))
+			return 1;
+		if (value > (3 * Math.PI / 8) && value <= (5 * Math.PI / 8))
+			return 2;
+		if (value > (5 * Math.PI / 8) && value <= (7 * Math.PI / 8))
+			return 3;
+		if (value > (7 * Math.PI / 8) || value <= (-7 * Math.PI / 8))
+			return 4;
+		if (value > (-7 * Math.PI / 8) && value <= (-5 * Math.PI / 8))
+			return 5;
+		if (value > (-5 * Math.PI / 8) && value <= (-3 * Math.PI / 8))
+			return 6;
+		if (value > (-3 * Math.PI / 8) && value <= (-Math.PI / 8))
+			return 7;
+		else
+			return 99;
+	}
+
+	public static int getDirectionDisplacement(float angle, boolean otherSide) {
+		// different compared to the other get displacement as this follows the
+		// cartesian plane instead of the compass plane
+		if ((angle <= Math.PI / 8 && angle > -Math.PI / 8) && !otherSide)
+			// east
+			return 2;
+		if ((angle >= Math.PI / 8 && angle < 3 * Math.PI / 8) && !otherSide)
+			// northEast
+			return 1;
+		if ((angle >= 3 * Math.PI / 8 && !otherSide)
+				|| (angle < 3 * -Math.PI / 8 && otherSide))
+			// north
+			return 0;
+		if ((angle >= -3 * Math.PI / 8 && angle < -Math.PI / 8) && otherSide)
+			// northWest
+			return 7;
+		if ((angle <= Math.PI / 8 && angle > -Math.PI / 8) && otherSide)
+			// west
+			return 6;
+		if ((angle >= Math.PI / 8 && angle < 3 * Math.PI / 8) && otherSide)
+			// SouthWest
+			return 5;
+		if ((angle >= 3 * Math.PI / 8 && otherSide)
+				|| (angle < 3 * -Math.PI / 8 && !otherSide))
+			// south
+			return 4;
+		if ((angle >= -3 * Math.PI / 8 && angle < -Math.PI / 8) && !otherSide)
+			// southEast
+			return 3;
+		else
+			return 99;
+	}
+
+	public static String getDirectionText(int dir) {
+		switch (dir) {
+		case 0:
+			return "North";
+		case 1:
+			return "NorthEast";
+		case 2:
+			return "East";
+		case 3:
+			return "SouthEast";
+		case 4:
+			return "South";
+		case 5:
+			return "SouthWest";
+		case 6:
+			return "West";
+		case 7:
+			return "Kayne's Daughter";
+		default:
+			return "invalid value input";
+		}
+	}
+
+	public static void directionInc() {
+		if (filteredDir == "North")
+			stepN++;
+		else if (filteredDir == "NorthEast")
+			stepNE++;
+		else if (filteredDir == "East")
+			stepE++;
+		else if (filteredDir == "SouthEast")
+			stepSE++;
+		else if (filteredDir == "South")
+			stepS++;
+		else if (filteredDir == "SouthWest")
+			stepSW++;
+		else if (filteredDir == "West")
+			stepW++;
+		else if (filteredDir == "Kayne's Daughter")
+			stepNW++;
+		steptxt1.setText("   NW: " + stepNW + "  N: " + stepN + "  NE: "
+				+ stepNE);
+		steptxt2.setText(" W: " + stepW + "                      E: " + stepE);
+		steptxt3.setText("   SW: " + stepSW + "  S: " + stepS + "  SE: "
+				+ stepSE);
+		totalDisplacement();
+	}
+
+	public static void totalDisplacement() {
+		// standard x y axis, up and right are positive, down and left are
+		// negative
+		float sqrt2 = (float) Math.sqrt(2);
+		float xaxis, yaxis;
+		xaxis = (stepE - stepW);
+		yaxis = (stepN - stepS);
+
+		// dealing with the diagonal axis
+		xaxis = xaxis + ((stepNE / sqrt2) + (stepSE / sqrt2));
+		xaxis = xaxis - ((stepNW / sqrt2) + (stepSW / sqrt2));
+
+		yaxis = yaxis + ((stepNW / sqrt2) + (stepNE / sqrt2));
+		yaxis = yaxis - ((stepSW / sqrt2) + (stepSE / sqrt2));
+
+		float angle = (float) Math.atan((yaxis / xaxis));
+		boolean otherSide = false;
+		if (xaxis < 0)
+			otherSide = true;
+		int directionNumber = getDirectionDisplacement(angle, otherSide);
+
+		totalDirection = getDirectionText(directionNumber);
+		displacement = (int) Math.sqrt((yaxis * yaxis + xaxis * xaxis));
+
+		totalDisplacement.setText("Total displacement: " + displacement
+				+ " steps " + totalDirection);
+	}
+
+	// -----------------------------------------------------------------------------
+
+	// -----------------------------------------------LAB 2 METHODS FOR STEP
+	// COUNTER
+	public static void valueAnalysis(float z) {
+
+		s[0] = s[1];
+		s[1] = s[2];
+		s[2] = s[3];
+		s[3] = s[4];
+		s[4] = z;
+
+		secant = (z - s[0]) / 5;
+		s = lowPass(s);
+		value = s[4];
+
+		findMinMax();
+		sec.setText("Secant: " + secant);
+	}
+
+	// low pass filter, credits to the lab manual
+	// (originally taken from http://en.wikipedia.org/wiki/Low-pass_filter)
+	public static float[] lowPass(float[] in) {
+		float[] out = new float[in.length];
+		float a = (float) 0.7; // changeable when testing, it's a ratio
+		for (int i = 1; i < in.length; i++) {
+			out[i] = a * in[i] + (1 - a) * out[i - 1];
+		}
+		return out;
+	}
+
+	public static void findMinMax() {
+		if (secant > 0 && toMax) {
+			stateMachine();
+		} else if (secant < 0 && toMax) {
+			toMax = false;
+			float max = findMaxS();
+			// the idea is that if at any step interval, a new max is found, it
+			// will reset back to step 2
+			if (max > currMax && state != 4 && max > 3) {
+				currMax = max;
+				noiseMax = (float) (max * 0.8);
+				noiseMin = (float) (max * 0.25);
+				restPoint = (float) (max * 0.25);
+				state = 2;
+				shift = 0;
+			} else if (state == 3) {
+				shift++;
+				stateMachine();
+			}
+		} else if (secant > 0 && (!toMax)) {
+			toMax = true;
+			if (state == 3) {
+				shift++;
+			}
+			currMin = findMinS();
+			if (currMin != 0)
+				MIN.setText("MIN: " + currMin);
+			stateMachine();
+		} else if (secant < 0 && (!toMax)) {
+			stateMachine();
+		}
+		toMAX.setText("Going to max: " + toMax);
+		if (noiseMin != 0)
+			noiseMIN.setText("noiseMIN: " + noiseMin);
+		if (currMax != 0)
+			MAX.setText("MAX: " + currMax);
+	}
+
+	public static void stateMachine() {
+		TVSetTxt(stateTxt, "State is currently: " + state);
+		if (state == 2) {
+			// for state 2, it will be falling until it hits the "noise"
+			// threashold"
+			if (value < noiseMax) {
+				state = 3;
+			}
+		}
+		if (state == 3) {
+			// critical for checking if it goes above or below
+			// if it goes above, then it goes back to state 2
+			if (value > noiseMax) {
+				state = 2;
+			}
+			if (shift >= 4) {
+				noiseMin = (float) (currMax * 0.3);
+			}
+			// if it goes below, it must have at least 2 counts of shifts, if
+			// not, reset back to 2 since it's an invalid spike
+			if (value < noiseMin) {
+				if (shift >= 2) {
+					state = 4;
+				} else {
+					state = 2;
+					shift = 0;
+				}
+			}
+		}
+
+		if (state == 4) {
+			// at this point it is just waiting for it to reach the normal
+			// threashold
+			if (restPoint < 0.7)
+				restPoint = (float) (currMax * 0.5);
+			else if (restPoint > 2.5)
+				restPoint = (float) 0.8;
+			if (value < restPoint) {
+				steps.addSteps();
+				stepsReset();
+			}
+		}
+	}
+
+	public static void stepsReset() {
+		state = 1;
+		currMax = 0;
+		noiseMax = 0;
+		noiseMin = 0;
+		restPoint = 0;
+	}
+
+	public static float findMaxS() {
+		float max = 0;
+		for (int i = 0; i < 5; i++) {
+			if (s[i] > max)
+				max = s[i];
+		}
+		return max;
+	}
+
+	public static float findMinS() {
+		float min = 20;
+		for (int i = 0; i < 5; i++) {
+			if (s[i] < min)
+				min = s[i];
+		}
+		return min;
+	}
+
+	// ------------------------------------------------------------------------
+
+	// -------------------------------------------------LAB 4 METHODS
+	@SuppressWarnings("null")
+	public static void updateCoor() {
+		PointF oldCoor = new PointF(xCoor, yCoor);
+		// because screw you key words
+		PointF newCoor = new PointF((float) (xCoor + stepLength
+				* Math.sin(filteredAzi)), (float) (yCoor - stepLength
+				* Math.cos(filteredAzi)));
+
+		List<InterceptPoint> walldetect = map.calculateIntersections(oldCoor,
+				newCoor);
+
+		// if wall is detected
+		if (walldetect.size() != 0) {
+			newCoor = walldetect.get(0).getPoint();
+			if (newCoor.x > oldCoor.x) {
+				newCoor.x -= 0.1;
+			} else if (newCoor.x < oldCoor.x) {
+				newCoor.x += 0.1;
+			}
+
+			if (newCoor.y > oldCoor.y) {
+				newCoor.y -= 0.1;
+			} else if (newCoor.y < oldCoor.y) {
+				newCoor.y += 0.1;
+			}
+		}
+
+		xCoor = newCoor.x;
+		yCoor = newCoor.y;
+		axisDisp.setText("Displacement=> x: " + xCoor + "  y: " + yCoor);
+		mv.setUserPoint(xCoor, yCoor);
+
+		// plot points and make into path
+		List<PointF> pathpnts = new ArrayList<PointF>();
+		pathpnts.add(newCoor);
+		pathpnts.add(destination);
+		mv.setUserPath(pathpnts);
+		updatePath();
+	}
+
+	public static void updatePath() {
+		List<PointF> pathpnts = new ArrayList<PointF>();
+		PointF curpnt = new PointF(xCoor, yCoor);
+		pathpnts.add(curpnt);
+
+		PointF[] dots;
+		// LineSegment test = new LineSegment(check, destination);
+		// check and see how many intersecting points are between this line
+		// segment
+		List<InterceptPoint> intersects = new ArrayList<InterceptPoint>();
+		intersects = map.calculateIntersections(curpnt, destination);
+		PointF currcheck = intersects.get(0).getPoint();
+		PointF nxtcheck;
+		PointF holdcheck;
+		boolean chkbot = false;
+		boolean chkdone = false;
+		// first check going upwards
+		currcheck.x -= (currcheck.x - curpnt.x) / 10;
+		currcheck.y -= (currcheck.y - curpnt.y) / 10;
+		nxtcheck = yShift(currcheck, (float) 0.5);
+
+		// check initial displacement
+		if (wallDetection(curpnt, destination)) {
+			chkdone = true;
+		}
+		if ((nxtcheck == currcheck) && (chkdone == false)) {
+			pathpnts.clear();
+			pathpnts.add(curpnt);
+		} else {
+			pathpnts.add(nxtcheck);
+		}
+
+		while ((chkbot != true) && (chkdone == false)) {
+			holdcheck = nxtcheck;
+			nxtcheck.x += currcheck.x - nxtcheck.x;
+			nxtcheck.y += currcheck.y - nxtcheck.y;
+			currcheck = holdcheck;
+			if (wallDetection(currcheck, nxtcheck)) // if the thing cannot rise
+													// any more
+			{
+				pathpnts.clear();
+				pathpnts.add(curpnt);
+				chkbot = true;
+			} else {
+				pathpnts.add(nxtcheck);
+				currcheck = nxtcheck;
+			}
+			if (wallDetection(curpnt, destination)) {
+				chkdone = true;
+			}
+
+		}
+
+		pathpnts.add(destination);
+		mv.setUserPath(pathpnts);
+	}
+
+	public static boolean wallDetection(PointF start, PointF end) {
+		List<InterceptPoint> intersects = new ArrayList<InterceptPoint>();
+		intersects = map.calculateIntersections(start, end);
+		if (intersects.isEmpty() == true)
+			return false;
+		else
+			return true;
+	}
+
+	public static PointF xShift(PointF toMove, float distance) {
+		float x = toMove.x, y = toMove.y;
+		double Rad16 = Math.toRadians(16);
+		x = x + distance;
+		y = (float) (y + (distance * Math.sin(Rad16)));
+		PointF nextPoint = new PointF(x, y);
+		if (!wallDetection(toMove, nextPoint)) {
+			return nextPoint;
+		} else {
+			return toMove;
+		}
+	}
+
+	public static PointF yShift(PointF toMove, float distance) {
+		float x = toMove.x, y = toMove.y;
+		double Rad16 = Math.toRadians(16);
+		y = y - distance;
+		x = (float) (x - (distance * Math.sin(Rad16)));
+		PointF nextPoint = new PointF(x, y);
+		if (!wallDetection(toMove, nextPoint)) {
+			return nextPoint;
+		} else {
+			return toMove;
+		}
+	}
+
+	// returns the following: 2 = error, 0000 = none open, 0001 +x open, 0010 -x
+	// open, 0100 +y open, 1000 -y open, combinations allowed
+	// if all open, it would be 1111
+	public static int checkOpening(PointF original, float distance) {
+		int status = 0000;
+		PointF test;
+		if (distance == 0)
+			return 2;
+		// test +x
+		test = xShift(original, distance);
+		if (!(test.equals(original)))
+			status += 0001;
+		// test -x
+		test = xShift(original, -1 * distance);
+		if (!(test.equals(original)))
+			status += 0010;
+		// test +y
+		test = yShift(original, distance);
+		if (!(test.equals(original)))
+			status += 0100;
+		// test -y
+		test = yShift(original, -1 * distance);
+		if (!(test.equals(original)))
+			status += 1000;
+
+		return status;
+	}
+
+	// --------------------------------------------------------------
+
+	// ---------------------------------------------METHODS WE DO NOT KNOW
+	@Override
+	public boolean onCreateOptionsMenu(Menu menu) {
+		// Inflate the menu; this adds items to the action bar if it is present.
+		getMenuInflater().inflate(R.menu.main, menu);
+		return true;
+	}
+
+	@Override
+	public void onCreateContextMenu(ContextMenu menu, View v,
+			ContextMenuInfo menuInfo) {
+		super.onCreateContextMenu(menu, v, menuInfo);
+		mv.onCreateContextMenu(menu, v, menuInfo);
+	}
+}

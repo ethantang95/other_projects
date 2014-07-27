@@ -1,0 +1,31 @@
+<ScrollView android:layout_height="wrap_content"
+			 android:layout_width="fill_parent" 
+			 android:id="@+id/scroll" 
+			 xmlns:tools="http://schemas.android.com/tools" 
+			 xmlns:android="http://schemas.android.com/apk/res/android">
+
+
+	<LinearLayout android:layout_height="match_parent" 
+				  android:layout_width="match_parent" 
+				  android:id="@+id/labelRel" 
+				  tools:context=".MainActivity"
+				  android:paddingTop="@dimen/activity_vertical_margin" 
+				  android:paddingRight="@dimen/activity_horizontal_margin" 
+				  android:paddingLeft="@dimen/activity_horizontal_margin" 
+				  android:paddingBottom="@dimen/activity_vertical_margin">
+
+
+		<TextView android:layout_height="wrap_content" 
+	    	  	  android:layout_width="wrap_content" 
+	    	  	  android:id="@+id/label1"/>
+		
+		 <Button 
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Clear steps"
+        android:onClick="clearSteps" 
+        android:layout_margin="20dp"/>
+
+	</LinearLayout>
+
+</ScrollView>

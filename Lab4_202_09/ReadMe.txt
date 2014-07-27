@@ -1,0 +1,2 @@
+This project was the final project for ECE155. It was done with me and my partner Sam Li. The code were written by both of us.
+This is a project to simulate a small GPS system which draws out the path from one point to another in our work lab. It uses sensors that are built into the android devices to track movements and position
